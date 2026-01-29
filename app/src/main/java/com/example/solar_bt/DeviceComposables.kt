@@ -24,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.solar_bt.devices.DeviceConnectionState
@@ -33,13 +34,22 @@ import com.example.solar_bt.devices.RenogyData
 fun DataPoint(label: String, data: RenogyData?) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(80.dp)
+        modifier = Modifier.width(90.dp)
     ) {
-        Text(text = label, style = MaterialTheme.typography.labelMedium)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            textAlign = TextAlign.Center
+        )
         Spacer(modifier = Modifier.height(4.dp))
         if (data?.value != null) {
+            val text = when (val value = data.value) {
+                is Float -> if (label == "SOC") "%.1f".format(value) else "%.2f".format(value)
+                is Double -> if (label == "SOC") "%.1f".format(value) else "%.2f".format(value)
+                else -> value.toString()
+            }
             Text(
-                text = "${data.value}${data.unit ?: ""}",
+                text = "$text${data.unit ?: ""}",
                 style = MaterialTheme.typography.bodyLarge
             )
         } else {
@@ -55,13 +65,27 @@ fun DataPoint(label: String, data: RenogyData?) {
 fun DcChargerOverview(
     deviceState: DeviceConnectionState?
 ) {
-    val soc = deviceState?.data?.find {
-        it.key.equals("Battery SoC", ignoreCase = true) ||
-        it.key.equals("State of Charge", ignoreCase = true) ||
-        it.key.equals("SOC", ignoreCase = true)
+    val chargingCurrentData = deviceState?.data?.find { it.key == "Charging Current" }
+    val batteryVoltageData = deviceState?.data?.find { it.key == "Battery Voltage" }
+    val controllerTempData = deviceState?.data?.find { it.key == "Controller Temp" }
+
+    val chargingWattsData = remember(chargingCurrentData, batteryVoltageData) {
+        val voltageStr = batteryVoltageData?.value?.toString()
+        val currentStr = chargingCurrentData?.value?.toString()
+
+        if (voltageStr != null && currentStr != null) {
+            val voltage = voltageStr.replace(",", ".").toFloatOrNull()
+            val current = currentStr.replace(",", ".").toFloatOrNull()
+            if (voltage != null && current != null) {
+                val wattage = voltage * current
+                RenogyData("Charging Power", "%.2f".format(wattage), "W")
+            } else {
+                null
+            }
+        } else {
+            null
+        }
     }
-    val current = deviceState?.data?.find { it.key == "Charging Current" }
-    val voltage = deviceState?.data?.find { it.key == "Battery Voltage" }
 
     Row(
         modifier = Modifier
@@ -70,9 +94,9 @@ fun DcChargerOverview(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        DataPoint(label = "SOC", data = soc)
-        DataPoint(label = "Voltage", data = voltage)
-        DataPoint(label = "Current", data = current)
+        DataPoint(label = "Charge Watts", data = chargingWattsData)
+        DataPoint(label = "Charge Amps", data = chargingCurrentData)
+        DataPoint(label = "Controller Temp", data = controllerTempData)
     }
 }
 
@@ -314,7 +338,10 @@ fun SmartBatteryFullView(
         }
 
         Text(
-            text = "${soc?.toString() ?: "N/A"}%",
+            text = soc?.let {
+                val socFloat = it.toString().replace(",", ".").toFloatOrNull()
+                socFloat?.let { "%.1f%%".format(it) } ?: "N/A"
+            } ?: "N/A",
             style = MaterialTheme.typography.displayLarge // Large text for SoC
         )
         Spacer(modifier = Modifier.height(16.dp))

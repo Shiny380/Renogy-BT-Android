@@ -77,6 +77,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -766,8 +767,7 @@ class MainActivity : ComponentActivity() {
 
         loadSavedDevices()
         requestBluetoothPermissions()
-        initialConnectAll() // Call to connect to all saved devices
-        startPeriodicReads()
+        initialConnectAll()
 
         setContent {
             SolarbtTheme {
@@ -786,7 +786,8 @@ class MainActivity : ComponentActivity() {
                                 navController.navigate("device_info/${device.device.address}")
                             },
                             onReconnectDevice = { savedDevice -> reconnectDevice(savedDevice) },
-                            deviceStates = deviceStates // Pass the deviceStates map
+                            deviceStates = deviceStates, // Pass the deviceStates map
+                            startFullDataRead = { addr, type -> startFullDataRead(addr, type, true) }
                         )
                     }
                     composable("device_info/{deviceAddress}") { backStackEntry ->
@@ -971,46 +972,6 @@ class MainActivity : ComponentActivity() {
             requestMultiplePermissions.launch(permissionsNotGranted.toTypedArray())
         }
     }
-    private fun startPeriodicReads() {
-        lifecycleScope.launch {
-            // This index will cycle through the list of connected device addresses
-            var deviceIndex = 0
-
-            while (true) {
-                // Get a snapshot of connected devices that are ready for a refresh (already have initial data)
-                val refreshableDevices = deviceStates.values.filter {
-                    it.connectionStatus == ConnectionStatus.CONNECTED && it.data.isNotEmpty()
-                }.toList()
-
-                if (refreshableDevices.isNotEmpty()) {
-                    // Make sure index is within bounds, creating a round-robin cycle
-                    if (deviceIndex >= refreshableDevices.size) {
-                        deviceIndex = 0
-                    }
-
-                    val deviceToRefresh = refreshableDevices[deviceIndex]
-                    val address = deviceToRefresh.address
-
-                    // Check if a read is already in progress for this device to avoid queuing reads
-                    val readInProgress = deviceToRefresh.currentReadRegister != null ||
-                            deviceToRefresh.connectionStatusMessage?.startsWith("Reading") == true
-
-                    if (!readInProgress) {
-                        deviceToRefresh.knownDeviceType?.let { deviceType ->
-                            Log.d(TAG, "Periodic refresh for $address")
-                            startFullDataRead(address, deviceType, true)
-                        }
-                    }
-
-                    // Move to the next device for the next iteration
-                    deviceIndex++
-                }
-
-                // Wait 5 seconds before attempting to refresh the next device in the cycle
-                delay(5000)
-            }
-        }
-    }
 }
 
 @SuppressLint("MissingPermission")
@@ -1025,6 +986,22 @@ fun DeviceInfoScreen(
     val deviceAddress = savedDevice?.device?.address
     val deviceType = savedDevice?.deviceType
     val deviceState = deviceAddress?.let { deviceStates[it] }
+
+    LaunchedEffect(deviceAddress) {
+        if (deviceAddress != null && deviceType != null) {
+            while (true) {
+                val currentState = deviceStates[deviceAddress] // get the latest state
+                val readInProgress = currentState?.currentReadRegister != null ||
+                        currentState?.connectionStatusMessage?.startsWith("Reading") == true
+
+                if (currentState?.connectionStatus == ConnectionStatus.CONNECTED && !readInProgress) {
+                    Log.d(TAG, "Periodic refresh for $deviceAddress on detail view")
+                    startFullDataRead(deviceAddress, deviceType)
+                }
+                delay(2000)
+            }
+        }
+    }
 
     // Handle nullability and invalid states early
     if (deviceAddress == null || deviceType == null || deviceState == null) {
@@ -1195,8 +1172,29 @@ fun SavedDevicesScreen(
     onRemoveDevice: (SavedBluetoothDevice) -> Unit,
     onDeviceClick: (SavedBluetoothDevice) -> Unit,
     onReconnectDevice: (SavedBluetoothDevice) -> Unit,
-    deviceStates: Map<String, DeviceConnectionState>
+    deviceStates: Map<String, DeviceConnectionState>,
+    startFullDataRead: (String, RenogyDeviceType) -> Unit,
 ) {
+    LaunchedEffect(Unit) {
+        while(true) {
+            val refreshableDevices = deviceStates.values.filter {
+                it.connectionStatus == ConnectionStatus.CONNECTED
+            }
+            if (refreshableDevices.isNotEmpty()) {
+                Log.d(TAG, "Periodic refresh for all devices on overview screen")
+                refreshableDevices.forEach { deviceToRefresh ->
+                    val readInProgress = deviceToRefresh.currentReadRegister != null ||
+                            deviceToRefresh.connectionStatusMessage?.startsWith("Reading") == true
+                    if (!readInProgress) {
+                        deviceToRefresh.knownDeviceType?.let { deviceType ->
+                            startFullDataRead(deviceToRefresh.address, deviceType)
+                        }
+                    }
+                }
+            }
+            delay(5000)
+        }
+    }
     Scaffold(
         floatingActionButton = {
             FloatingActionButton(onClick = onAddNewDeviceClick) {

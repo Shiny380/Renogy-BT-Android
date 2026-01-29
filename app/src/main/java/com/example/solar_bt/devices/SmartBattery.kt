@@ -56,7 +56,7 @@ object SmartBattery : RenogyDevice {
         val remainingCapacity = data.toUInt32(4) * 0.001
         val fullCapacity = data.toUInt32(8) * 0.001
         val stateOfCharge =
-            if (fullCapacity > 0) (remainingCapacity / fullCapacity * 100).toInt() else 0
+            if (fullCapacity > 0) (remainingCapacity / fullCapacity * 100).toFloat() else 0.0f
 
         return listOf(
             RenogyData("Voltage", "%.1f".format(voltage), "V"),
