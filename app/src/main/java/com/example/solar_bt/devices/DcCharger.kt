@@ -13,26 +13,15 @@ object DcCharger : RenogyDevice {
         1 to "open", 2 to "sealed", 3 to "gel", 4 to "lithium", 5 to "custom"
     )
 
-    private val chargingStateValuesMap = mapOf(
-        0 to "Standby",
-        1 to "Alternator -> Battery",
-        2 to "Battery <- Alternator",
-        3 to "Solar -> Battery",
-        4 to "Solar + Alternator -> Battery",
-        5 to "Solar -> Alternator"
-    )
-
     override val deviceInfoRegister = RegisterInfo(12, 8, "DC Charger Device Info")
     private val chargingInfoRegister = RegisterInfo(256, 30, "DC Charger Charging Info")
     private val stateRegisters = RegisterInfo(288, 3, "DC Charger Alarms & Status")
-//    private val state2Registers = RegisterInfo(293, 1, "DC Charger Charging State")
-    private val batteryTypeRegister = RegisterInfo(57348, 1, "DC Charger Battery Type")
+    private val settingsRegister = RegisterInfo(0xE001, 33, "DC Charger Settings")
 
     override val dataRegisters = listOf(
         chargingInfoRegister,
         stateRegisters,
-//        state2Registers,
-        batteryTypeRegister
+        settingsRegister
     )
 
     override fun parseData(register: RegisterInfo, data: ByteArray): List<RenogyData>? {
@@ -40,8 +29,7 @@ object DcCharger : RenogyDevice {
             deviceInfoRegister.address -> parseDeviceInfo(data)
             chargingInfoRegister.address -> parseChargingInfo(data)
             stateRegisters.address -> parseState(data)
-//            state2Registers.address -> parseChargingState(data)
-            batteryTypeRegister.address -> parseBatteryType(data)
+            settingsRegister.address -> parseSettings(data)
             else -> null
         }
         Log.d(
@@ -57,31 +45,11 @@ object DcCharger : RenogyDevice {
         )
     }
 
-    private fun parseBatteryType(data: ByteArray): List<RenogyData> {
-        val typeCode = data.toUInt16(0)
-        return listOf(
-            RenogyData("Battery Type", batteryTypeMap[typeCode] ?: "Unknown ($typeCode)")
-        )
-    }
-
-    private fun parseChargingState(data: ByteArray): List<RenogyData> {
-        val chargingStateCode = data.toUInt16(0)
-        val chargingStateString = chargingStateValuesMap[chargingStateCode] ?: "Unknown ($chargingStateCode)"
-        Log.d(
-            "DcCharger",
-            "Charging State Code: $chargingStateCode, Mapped Value: $chargingStateString"
-        )
-        return listOf(
-            RenogyData(
-                "Charging State",
-                chargingStateString
-            )
-        )
-    }
-
     private fun parseState(data: ByteArray): List<RenogyData> {
         val results = mutableListOf<RenogyData>()
-        val chargingStatusCode = data[0].toInt() and 0xFF
+        // Per spec, charging state is the low byte of register 0x0120.
+        // Data is [high0120, low0120, high0121, low0121, ...], so we want data[1].
+        val chargingStatusCode = data[1].toInt() and 0xFF
         results.add(
             RenogyData(
                 "Battery Charging State",
@@ -90,54 +58,26 @@ object DcCharger : RenogyDevice {
         )
 
         // Alarms
-        val alarmByte1 =
-            data.toUInt16(1) // Bytes 2 and 3 of the response, but index 1 and 2 of the data
-        if ((alarmByte1 shr 11) and 1 == 1) results.add(RenogyData("Alarm", "Low Temp Shutdown"))
-        if ((alarmByte1 shr 10) and 1 == 1) results.add(
-            RenogyData(
-                "Alarm",
-                "BMS Overcharge Protection"
-            )
-        )
-        if ((alarmByte1 shr 9) and 1 == 1) results.add(
-            RenogyData(
-                "Alarm",
-                "Starter Reverse Polarity"
-            )
-        )
-        if ((alarmByte1 shr 8) and 1 == 1) results.add(
-            RenogyData(
-                "Alarm",
-                "Alternator Over Voltage"
-            )
-        )
-        if ((alarmByte1 shr 4) and 1 == 1) results.add(
-            RenogyData(
-                "Alarm",
-                "Alternator Over Current"
-            )
-        )
-        if ((alarmByte1 shr 3) and 1 == 1) results.add(RenogyData("Alarm", "Controller Over Temp"))
+        // Register 0x0121 is at offset 2 (bytes 2, 3)
+        val faults1 = data.toUInt16(2)
+        if ((faults1 shr 11) and 1 == 1) results.add(RenogyData("Alarm", "Low Temp Shutdown")) // b11
+        if ((faults1 shr 10) and 1 == 1) results.add(RenogyData("Alarm", "BMS Overcharge Protection")) // b10
+        if ((faults1 shr 9) and 1 == 1) results.add(RenogyData("Alarm", "Starter Reverse Polarity")) // b9
+        if ((faults1 shr 8) and 1 == 1) results.add(RenogyData("Alarm", "Alternator Over Voltage")) // b8
+        // b6-b7 are reserved
+        if ((faults1 shr 5) and 1 == 1) results.add(RenogyData("Alarm", "Alternator Over Current")) // b5
+        if ((faults1 shr 4) and 1 == 1) results.add(RenogyData("Alarm", "Controller Over Temp 2")) // b4
 
-        val alarmByte2 = data.toUInt16(3) // Bytes 4 and 5
-        if ((alarmByte2 shr 12) and 1 == 1) results.add(
-            RenogyData(
-                "Alarm",
-                "Solar Reverse Polarity"
-            )
-        )
-        if ((alarmByte2 shr 9) and 1 == 1) results.add(RenogyData("Alarm", "Solar Over Voltage"))
-        if ((alarmByte2 shr 7) and 1 == 1) results.add(RenogyData("Alarm", "Solar Over Current"))
-        if ((alarmByte2 shr 6) and 1 == 1) results.add(
-            RenogyData(
-                "Alarm",
-                "Battery Over Temperature"
-            )
-        )
-        if ((alarmByte2 shr 5) and 1 == 1) results.add(RenogyData("Alarm", "Controller Over Temp"))
-        if ((alarmByte2 shr 2) and 1 == 1) results.add(RenogyData("Alarm", "Battery Low Voltage"))
-        if ((alarmByte2 shr 1) and 1 == 1) results.add(RenogyData("Alarm", "Battery Over Voltage"))
-        if (alarmByte2 and 1 == 1) results.add(RenogyData("Alarm", "Battery Over Discharge"))
+        // Register 0x0122 is at offset 4 (bytes 4, 5)
+        val faults2 = data.toUInt16(4)
+        if ((faults2 shr 12) and 1 == 1) results.add(RenogyData("Alarm", "Solar Reverse Polarity")) // b12
+        if ((faults2 shr 9) and 1 == 1) results.add(RenogyData("Alarm", "Solar Over Voltage")) // b9
+        if ((faults2 shr 7) and 1 == 1) results.add(RenogyData("Alarm", "Solar Over Current")) // b7 ("too high")
+        if ((faults2 shr 6) and 1 == 1) results.add(RenogyData("Alarm", "Battery Over Temperature")) // b6
+        if ((faults2 shr 5) and 1 == 1) results.add(RenogyData("Alarm", "Controller Over Temp")) // b5
+        if ((faults2 shr 2) and 1 == 1) results.add(RenogyData("Alarm", "Battery Low Voltage")) // b2
+        if ((faults2 shr 1) and 1 == 1) results.add(RenogyData("Alarm", "Battery Over Voltage")) // b1
+        if (faults2 and 1 == 1) results.add(RenogyData("Alarm", "Battery Over Discharge")) // b0
 
         return results
     }
@@ -160,12 +100,56 @@ object DcCharger : RenogyDevice {
             RenogyData("Max Charge A Today", data.toUInt16(26) * 0.01f, "A"),
             RenogyData("Max Charge W Today", data.toUInt16(30), "W"),
             RenogyData("Charging Ah Today", data.toUInt16(34), "Ah"),
-            RenogyData("Power Gen Today", data.toUInt16(38), "Wh"),
+            RenogyData("Power Gen Today", data.toUInt16(38) / 1000.0f, "kWh"),
             RenogyData("Total Working Days", data.toUInt16(42), "days"),
             RenogyData("Over-discharge Count", data.toUInt16(44)),
             RenogyData("Full Charge Count", data.toUInt16(46)),
             RenogyData("Total Ah Accumulated", data.toUInt32(48), "Ah"),
-            RenogyData("Total Power Gen", data.toUInt32(56), "Wh")
+            RenogyData("Total Power Gen", data.toUInt32(56) / 1000.0f, "kWh")
         )
+    }
+
+    private fun parseSettings(data: ByteArray): List<RenogyData> {
+        val typeCode = data.toUInt16(6)
+        val batteryType = batteryTypeMap[typeCode]
+
+        val allSettings = mutableListOf(
+            RenogyData("Charging Current Setting", data.toUInt16(0) * 0.01f, "A"),
+            RenogyData("Battery Capacity", data.toUInt16(2), "Ah"),
+            RenogyData("System Voltage Setting", data[4].toUByte().toInt(), "V"),
+            RenogyData("Recognized Battery Voltage", data[5].toUByte().toInt(), "V"),
+            RenogyData("Battery Type", batteryType ?: "Unknown ($typeCode)"),
+            RenogyData("Over-voltage", data.toUInt16(8) * 0.1f, "V"),
+            RenogyData("Charging Limit Voltage", data.toUInt16(10) * 0.1f, "V"),
+            RenogyData("Equalization Voltage", data.toUInt16(12) * 0.1f, "V"),
+            RenogyData("Boost Voltage", data.toUInt16(14) * 0.1f, "V"),
+            RenogyData("Float Voltage", data.toUInt16(16) * 0.1f, "V"),
+            RenogyData("Boost Return Voltage", data.toUInt16(18) * 0.1f, "V"),
+            RenogyData("Over-discharge Return", data.toUInt16(20) * 0.1f, "V"),
+            RenogyData("Under-voltage Warning", data.toUInt16(22) * 0.1f, "V"),
+            RenogyData("Over-discharge Voltage", data.toUInt16(24) * 0.1f, "V"),
+            RenogyData("Discharging Limit", data.toUInt16(26) * 0.1f, "V"),
+            RenogyData("Over-discharge Delay", data.toUInt16(30), "s"),
+            RenogyData("Equalization Time", data.toUInt16(32), "min"),
+            RenogyData("Boost Time", data.toUInt16(34), "min"),
+            RenogyData("Equalization Interval", data.toUInt16(36), "days"),
+            RenogyData("Temp Comp Coeff", data.toUInt16(38), "mV/℃/2V"),
+            RenogyData("Light Control Delay", data.toUInt16(58), "min"),
+            RenogyData("Light Control Voltage", data.toUInt16(60), "V")
+        )
+
+        if (batteryType == "lithium") {
+            allSettings.removeIf {
+                it.key in listOf(
+                    "Equalization Voltage",
+                    "Float Voltage",
+                    "Equalization Time",
+                    "Equalization Interval",
+                    "Temp Comp Coeff"
+                )
+            }
+        }
+
+        return allSettings
     }
 }
