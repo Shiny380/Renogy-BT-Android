@@ -38,5 +38,9 @@ data class DeviceConnectionState(
     val interPacketTimeoutJob: Job? = null,
     val registersToRead: Iterator<RegisterInfo>? = null,
     val currentReadRegister: RegisterInfo? = null,
-    val aggregatedData: MutableList<RenogyData> = mutableListOf()
+    val aggregatedData: MutableList<RenogyData> = mutableListOf(),
+
+    // State for writing settings
+    val isWriting: Boolean = false,
+    val writeError: String? = null
 )

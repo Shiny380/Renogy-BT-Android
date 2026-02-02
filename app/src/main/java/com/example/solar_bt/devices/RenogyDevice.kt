@@ -2,7 +2,19 @@ package com.example.solar_bt.devices
 
 import com.example.solar_bt.RegisterInfo
 
-data class RenogyData(val key: String, val value: Any, val unit: String? = null) {
+sealed class ValidationRule
+data class MinMaxRule(val min: Float, val max: Float) : ValidationRule()
+data class AllowedValuesRule(val values: Map<String, Number>) : ValidationRule()
+
+data class RenogyData(
+    val key: String,
+    var value: Any,
+    val unit: String? = null,
+    val isWritable: Boolean = false,
+    val validationRule: ValidationRule? = null,
+    var isVisible: Boolean = true,
+    val sourceRegister: RegisterInfo? = null
+) {
     override fun toString(): String {
         return "$key: $value${unit?.let { " $it" } ?: ""}"
     }
@@ -22,11 +34,18 @@ interface RenogyDevice {
     val dataRegisters: List<RegisterInfo>
 
     /**
-     * Parses the raw response from a Modbus read command.
-     * @param register The RegisterInfo that was used to make the read request. This allows the
-     * function to know which parsing logic to apply.
-     * @param data The raw data payload from the Modbus response (after header and CRC have been handled).
-     * @return A list of RenogyData objects representing the parsed key-value pairs, or null if parsing fails.
+     * Creates and returns the complete list of RenogyData objects that this device supports,
+     * initialized with default or "N/A" values.
+     * @return A list of all possible RenogyData objects for this device.
      */
-    fun parseData(register: RegisterInfo, data: ByteArray): List<RenogyData>?
+    fun getInitialData(): List<RenogyData>
+
+    /**
+     * Parses the raw response from a Modbus read command and updates the provided data list.
+     * @param register The RegisterInfo that was used to make the read request.
+     * @param data The raw data payload from the Modbus response.
+     * @param currentData The list of RenogyData to be updated with the new values.
+     * @return `true` if parsing was successful, `false` otherwise.
+     */
+    fun parseData(register: RegisterInfo, data: ByteArray, currentData: List<RenogyData>): Boolean
 }

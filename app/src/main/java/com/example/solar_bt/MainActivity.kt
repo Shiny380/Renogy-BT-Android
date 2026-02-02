@@ -38,6 +38,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,6 +54,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -86,6 +88,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
@@ -120,7 +123,7 @@ enum class RenogyDeviceType {
 }
 
 fun ByteArray.toHexString(): String =
-    joinToString(separator = " ") { eachByte -> "½02x".format(eachByte) }
+    joinToString(separator = " ") { eachByte -> "%02x".format(eachByte) }
 
 data class SavedBluetoothDevice(
     val device: BluetoothDevice,
@@ -327,7 +330,6 @@ class MainActivity : ComponentActivity() {
                         connectionStatus = ConnectionStatus.FAILED
                     )
                     Log.e(TAG, errorMessage)
-                    // If CRC fails, we should still try the next register, but mark the current as failed.
                     readNextRegister(address)
                     return
                 }
@@ -341,7 +343,6 @@ class MainActivity : ComponentActivity() {
                         connectionStatus = ConnectionStatus.FAILED
                     )
                     Log.e(TAG, errorMessage)
-                    // If data extraction fails, we should still try the next register.
                     readNextRegister(address)
                     return
                 }
@@ -349,36 +350,32 @@ class MainActivity : ComponentActivity() {
                 val currentReadRegister = currentState.currentReadRegister
 
                 if (currentState.isBeingSaved && currentReadRegister != null) {
-                    // This is the response from a device type discovery read.
                     val discoveredDeviceType =
                         RenogyDeviceType.entries[currentState.deviceInfoRegisterIndex]
-                    // Now save the device, and then initiate the full data read.
                     saveDevice(gatt.device, discoveredDeviceType)
-                    // Update state with known device type and clear isBeingSaved
                     deviceStates[address] = currentState.copy(
                         knownDeviceType = discoveredDeviceType,
                         isBeingSaved = false,
                         connectionStatusMessage = "Device type identified. Loading data..."
                     )
-                    // Now, initiate the full data read for this newly discovered and saved device
                     startFullDataRead(address, discoveredDeviceType)
                 } else if (currentReadRegister != null) {
-                    // This is a regular data read (either device info after initial connect, or data registers)
                     Log.d(
                         TAG,
                         "onCharacteristicChanged: currentReadRegister=${currentReadRegister.description}, knownDeviceType=${currentState.knownDeviceType}"
                     )
                     currentState.knownDeviceType?.let { knownType ->
                         val renogyDevice = RenogyDeviceFactory.getDevice(knownType)
-                        renogyDevice.parseData(currentReadRegister, data)?.let { parsedData ->
-                            parsedData.forEach { newItem ->
-                                val index = currentState.aggregatedData.indexOfFirst { it.key == newItem.key }
-                                if (index != -1) {
-                                    currentState.aggregatedData[index] = newItem
-                                } else {
-                                    currentState.aggregatedData.add(newItem)
-                                }
-                            }
+                        if (!renogyDevice.parseData(
+                                currentReadRegister,
+                                data,
+                                currentState.aggregatedData
+                            )
+                        ) {
+                            Log.w(
+                                TAG,
+                                "Failed to parse data for ${currentReadRegister.description}"
+                            )
                         }
                     }
                     readNextRegister(address)
@@ -387,7 +384,6 @@ class MainActivity : ComponentActivity() {
                         TAG,
                         "Received data on $address but no current read register was set or known type."
                     )
-                    // Just move to next register, but this indicates a potential issue in flow
                     readNextRegister(address)
                 }
             } else {
@@ -411,12 +407,8 @@ class MainActivity : ComponentActivity() {
                 Log.d(TAG, "Notifications enabled for $address.")
                 deviceStates[address] = currentState.copy(connectionStatusMessage = "Connected")
 
-                // Once notifications are enabled, the device is ready for communication.
-                // If we know the device type (i.e., it's a saved device), start reading data.
-                // Otherwise, if it's a new device being saved, start by finding its type.
                 if (currentState.knownDeviceType != null) {
                     currentState.knownDeviceType.let { deviceType ->
-                        // Don't start a new read if one is already in progress or data is already loaded.
                         val readInProgress = currentState.registersToRead?.hasNext() == true ||
                                 currentState.connectionStatusMessage?.startsWith("Reading") == true
                         if (currentState.data.isEmpty() && !readInProgress) {
@@ -440,13 +432,35 @@ class MainActivity : ComponentActivity() {
             characteristic: BluetoothGattCharacteristic?,
             status: Int
         ) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d(TAG, "Characteristic write successful for ${characteristic?.uuid}")
+            val address = gatt?.device?.address ?: return
+            val state = deviceStates[address] ?: return
+
+            // This callback is for the write operation.
+            if (state.isWriting) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    Log.d(TAG, "Setting write successful for $address.")
+                    // The write was successful, now trigger a refresh to get the updated value.
+                    state.knownDeviceType?.let {
+                        startFullDataRead(address, it, isRefresh = true)
+                    }
+                } else {
+                    Log.e(TAG, "Setting write failed for $address with status: $status")
+                    deviceStates[address] = state.copy(
+                        writeError = "Write failed with status: $status"
+                    )
+                }
+                // Reset writing state regardless of outcome.
+                deviceStates[address] = deviceStates[address]!!.copy(isWriting = false)
             } else {
-                Log.e(
-                    TAG,
-                    "Characteristic write failed with status: $status for ${characteristic?.uuid}"
-                )
+                // This could be the write from readRegister.
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    Log.d(TAG, "Characteristic write successful for ${characteristic?.uuid}")
+                } else {
+                    Log.e(
+                        TAG,
+                        "Characteristic write failed with status: $status for ${characteristic?.uuid}"
+                    )
+                }
             }
         }
     }
@@ -460,7 +474,10 @@ class MainActivity : ComponentActivity() {
         if (state.registersToRead?.hasNext() == true) {
 
             val registerToRead = state.registersToRead.next()
-            Log.d(TAG, "Reading next register: ${registerToRead.description} @${registerToRead.address}")
+            Log.d(
+                TAG,
+                "Reading next register: ${registerToRead.description} @${registerToRead.address}"
+            )
 
             state.bluetoothGatt?.let { gatt ->
 
@@ -637,7 +654,7 @@ class MainActivity : ComponentActivity() {
 
         deviceStates[address] = state.copy(connectionStatusMessage = "Determining device type...")
 
-        val devicesToTry = RenogyDeviceType.entries
+        val devicesToTry = RenogyDeviceType.entries.toTypedArray()
 
         if (state.deviceInfoRegisterIndex >= devicesToTry.size) {
             deviceStates[address] = state.copy(
@@ -712,14 +729,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startFullDataRead(address: String, deviceType: RenogyDeviceType, isRefresh: Boolean = false) {
+    private fun startFullDataRead(
+        address: String,
+        deviceType: RenogyDeviceType,
+        isRefresh: Boolean = false
+    ) {
         val state = deviceStates[address] ?: return
         val renogyDevice = RenogyDeviceFactory.getDevice(deviceType)
 
-        val initialAggregatedData = if (isRefresh && state.data.isNotEmpty()) state.data.toMutableList() else mutableListOf()
+        // With the new model, we always start with a fresh data structure.
+        val initialData = renogyDevice.getInitialData()
 
         deviceStates[address] = state.copy(
-            aggregatedData = initialAggregatedData, // Clear previous aggregated data
+            // Use the new initial data for the read cycle's aggregation.
+            aggregatedData = initialData.toMutableList(),
+            // The UI-facing data should be cleared if it's not a refresh, or updated at the end.
+            data = if (isRefresh) state.data else emptyList(),
             registersToRead = (listOf(renogyDevice.deviceInfoRegister) + renogyDevice.dataRegisters).iterator(),
             connectionStatusMessage = if (isRefresh) "Refreshing..." else "Fetching device data..."
         )
@@ -729,6 +754,84 @@ class MainActivity : ComponentActivity() {
 
     private fun reconnectDevice(savedDevice: SavedBluetoothDevice) {
         connectToDevice(savedDevice.device, deviceType = savedDevice.deviceType)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun writeSetting(address: String, key: String, value: Any) {
+        val state = deviceStates[address] ?: return
+
+        if (state.isWriting || state.currentReadRegister != null) {
+            Log.w(TAG, "Device $address is busy, cannot write setting now.")
+            // Optionally, set a writeError here to inform the user
+            deviceStates[address] = state.copy(writeError = "Device is busy. Try again shortly.")
+            return
+        }
+
+        val renogyDevice =
+            state.knownDeviceType?.let { RenogyDeviceFactory.getDevice(it) } ?: return
+        val dataToUpdate = renogyDevice.getInitialData().find { it.key == key }
+
+        if (dataToUpdate == null || dataToUpdate.sourceRegister == null) {
+            Log.e(TAG, "Could not find register for setting: $key")
+            deviceStates[address] = state.copy(writeError = "Setting '$key' is not supported.")
+            return
+        }
+
+        val command = createModbusWriteCommand(
+            deviceAddress = 0xFF,
+            startRegister = dataToUpdate.sourceRegister.address,
+            value = value
+        )
+
+        state.writeCharacteristic?.let { char ->
+            // Set device state to writing
+            deviceStates[address] = state.copy(isWriting = true, writeError = null)
+
+            val writeStatus = state.bluetoothGatt?.writeCharacteristic(
+                char,
+                command,
+                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            )
+
+            if (writeStatus != BluetoothStatusCodes.SUCCESS) {
+                Log.e(TAG, "Failed to initiate write for setting $key, status: $writeStatus")
+                deviceStates[address] = state.copy(
+                    isWriting = false,
+                    writeError = "Failed to send command to device."
+                )
+            }
+            // Success is now handled by onCharacteristicWrite
+        } ?: run {
+            Log.e(TAG, "Write characteristic is null for $address")
+            deviceStates[address] = state.copy(writeError = "Device not ready to write.")
+        }
+    }
+
+    private fun createModbusWriteCommand(
+        deviceAddress: Int,
+        startRegister: Int,
+        value: Any
+    ): ByteArray {
+        val valueInt = when (value) {
+            is Float -> (value * 100).toInt() // Example scaling, adjust as needed
+            is Int -> value
+            is String -> value.toIntOrNull() ?: 0
+            else -> 0
+        }
+
+        val command = ByteArray(8)
+        command[0] = deviceAddress.toByte()
+        command[1] = 0x06 // Modbus function code for "Write Single Register"
+        command[2] = (startRegister shr 8).toByte()
+        command[3] = (startRegister and 0xFF).toByte()
+        command[4] = (valueInt shr 8).toByte()
+        command[5] = (valueInt and 0xFF).toByte()
+
+        val crc = calculateCrc16(command.copyOfRange(0, 6))
+        command[6] = (crc and 0xFF).toByte()
+        command[7] = (crc shr 8).toByte()
+
+        return command
     }
 
     @SuppressLint("MissingPermission")
@@ -787,7 +890,13 @@ class MainActivity : ComponentActivity() {
                             },
                             onReconnectDevice = { savedDevice -> reconnectDevice(savedDevice) },
                             deviceStates = deviceStates, // Pass the deviceStates map
-                            startFullDataRead = { addr, type -> startFullDataRead(addr, type, true) }
+                            startFullDataRead = { addr, type ->
+                                startFullDataRead(
+                                    addr,
+                                    type,
+                                    true
+                                )
+                            }
                         )
                     }
                     composable("device_info/{deviceAddress}") { backStackEntry ->
@@ -797,7 +906,14 @@ class MainActivity : ComponentActivity() {
                             navController = navController,
                             savedDevice = savedDevice,
                             deviceStates = deviceStates,
-                            startFullDataRead = { addr, type -> startFullDataRead(addr, type, true) }
+                            startFullDataRead = { addr, type ->
+                                startFullDataRead(
+                                    addr,
+                                    type,
+                                    true
+                                )
+                            },
+                            writeSetting = ::writeSetting
                         )
                     }
                     dialog("add_device") {
@@ -980,21 +1096,23 @@ class MainActivity : ComponentActivity() {
 fun DeviceInfoScreen(
     navController: NavController,
     savedDevice: SavedBluetoothDevice?,
-    deviceStates: Map<String, DeviceConnectionState>,
-    startFullDataRead: (String, RenogyDeviceType) -> Unit
+    deviceStates: MutableMap<String, DeviceConnectionState>,
+    startFullDataRead: (String, RenogyDeviceType) -> Unit,
+    writeSetting: (address: String, key: String, value: Any) -> Unit
 ) {
     val deviceAddress = savedDevice?.device?.address
     val deviceType = savedDevice?.deviceType
     val deviceState = deviceAddress?.let { deviceStates[it] }
+    var isSettingsDialogVisible by remember { mutableStateOf(false) }
 
-    LaunchedEffect(deviceAddress) {
+    LaunchedEffect(deviceAddress, isSettingsDialogVisible) {
         if (deviceAddress != null && deviceType != null) {
             while (true) {
                 val currentState = deviceStates[deviceAddress] // get the latest state
                 val readInProgress = currentState?.currentReadRegister != null ||
                         currentState?.connectionStatusMessage?.startsWith("Reading") == true
 
-                if (currentState?.connectionStatus == ConnectionStatus.CONNECTED && !readInProgress) {
+                if (currentState?.connectionStatus == ConnectionStatus.CONNECTED && !readInProgress && !isSettingsDialogVisible) {
                     Log.d(TAG, "Periodic refresh for $deviceAddress on detail view")
                     startFullDataRead(deviceAddress, deviceType)
                 }
@@ -1064,11 +1182,27 @@ fun DeviceInfoScreen(
             if (deviceState.data.isNotEmpty()) {
                 when (deviceType) {
                     RenogyDeviceType.DC_CHARGER -> {
-                        DcChargerFullView(deviceState = deviceState)
+                        DcChargerFullView(
+                            deviceState = deviceState,
+                            onWriteSetting = { key, value ->
+                                writeSetting(
+                                    deviceAddress,
+                                    key,
+                                    value
+                                )
+                            },
+                            onClearError = {
+                                deviceStates[deviceAddress] = deviceState.copy(writeError = null)
+                            },
+                            onSettingsVisibilityChange = { isSettingsDialogVisible = it }
+                        )
                     }
 
                     RenogyDeviceType.BATTERY -> {
-                        SmartBatteryFullView(deviceState = deviceState)
+                        SmartBatteryFullView(
+                            deviceState = deviceState,
+                            onSettingsVisibilityChange = { isSettingsDialogVisible = it }
+                        )
                     }
 
                     else -> {
@@ -1176,7 +1310,7 @@ fun SavedDevicesScreen(
     startFullDataRead: (String, RenogyDeviceType) -> Unit,
 ) {
     LaunchedEffect(Unit) {
-        while(true) {
+        while (true) {
             val refreshableDevices = deviceStates.values.filter {
                 it.connectionStatus == ConnectionStatus.CONNECTED
             }
@@ -1214,27 +1348,30 @@ fun SavedDevicesScreen(
                 )
             }
         }
+    }
+}
+
+@Composable
+fun DeviceSummaryView(savedDevice: SavedBluetoothDevice, deviceState: DeviceConnectionState) {
+    when (savedDevice.deviceType) {
+        RenogyDeviceType.DC_CHARGER -> DcChargerOverview(
+            deviceState = deviceState
+        )
+
+        RenogyDeviceType.BATTERY -> SmartBatteryOverview(
+            deviceState = deviceState
+        )
+
+        null -> {
+            // Do nothing, as per requirement to not show anything else.
         }
     }
-    
-    @Composable
-    fun DeviceSummaryView(savedDevice: SavedBluetoothDevice, deviceState: DeviceConnectionState) {
-        when (savedDevice.deviceType) {
-            RenogyDeviceType.DC_CHARGER -> DcChargerOverview(
-                deviceState = deviceState
-            )
-            RenogyDeviceType.BATTERY -> SmartBatteryOverview(
-                deviceState = deviceState
-            )
-            null -> {
-                // Do nothing, as per requirement to not show anything else.
-            }
-        }
-    }
-    
-    @SuppressLint("MissingPermission")
-    @Composable
-    private fun SavedDeviceItem(    savedDevice: SavedBluetoothDevice,
+}
+
+@SuppressLint("MissingPermission")
+@Composable
+private fun SavedDeviceItem(
+    savedDevice: SavedBluetoothDevice,
     deviceState: DeviceConnectionState?,
     onRenameDevice: (SavedBluetoothDevice) -> Unit,
     onRemoveDevice: (SavedBluetoothDevice) -> Unit,
@@ -1262,23 +1399,14 @@ fun SavedDevicesScreen(
                         .padding(vertical = 8.dp)
                 ) {
                     Text(
-                        text = savedDevice.customName ?: savedDevice.device.name ?: "Unnamed Device",
+                        text = savedDevice.customName ?: savedDevice.device.name
+                        ?: "Unnamed Device",
                         style = MaterialTheme.typography.titleMedium
                     )
-                    val statusText = deviceState?.connectionStatusMessage ?: deviceState?.connectionStatus?.name ?: "Unknown"
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Status: $statusText",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        if (deviceState?.connectionStatusMessage != null) {
-                            Spacer(Modifier.width(4.dp))
-                            CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.dp)
-                        }
-                    }
+                    DeviceStatusIndicator(deviceState = deviceState)
                     savedDevice.deviceType?.let {
                         Text(
-                            text = "Type: ${it.name.replace("_", " ")}",
+                            text = it.name.replace("_", " "),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -1338,7 +1466,8 @@ fun SavedDevicesScreen(
                         modifier = Modifier.padding(16.dp)
                     ) {
                         if (deviceState?.connectionStatus == ConnectionStatus.CONNECTING ||
-                            (deviceState?.connectionStatus == ConnectionStatus.CONNECTED && deviceState.data.isEmpty() && deviceState.error == null)) {
+                            (deviceState?.connectionStatus == ConnectionStatus.CONNECTED && deviceState.data.isEmpty() && deviceState.error == null)
+                        ) {
                             CircularProgressIndicator(modifier = Modifier.size(32.dp))
                             Spacer(Modifier.height(8.dp))
                         }
@@ -1349,6 +1478,29 @@ fun SavedDevicesScreen(
         }
     }
 }
+
+@Composable
+private fun DeviceStatusIndicator(deviceState: DeviceConnectionState?) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        val isRefreshing =
+            deviceState?.connectionStatusMessage != null || deviceState?.connectionStatus == ConnectionStatus.CONNECTING
+        if (isRefreshing) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        } else {
+            val statusColor = when (deviceState?.connectionStatus) {
+                ConnectionStatus.CONNECTED -> Color.Green
+                ConnectionStatus.DISCONNECTED, ConnectionStatus.FAILED -> Color.Red
+                else -> Color.Gray
+            }
+            Box(
+                modifier = Modifier
+                    .size(16.dp)
+                    .background(statusColor, shape = CircleShape)
+            )
+        }
+    }
+}
+
 
 @Composable
 fun AddDeviceDialog(
