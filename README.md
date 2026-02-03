@@ -1,6 +1,8 @@
 # Solar Bluetooth Android
 
-<img src="app/src/main/ic_launcher-playstore.png" width="128" alt="">
+<p align="center">
+  <img src="app/src/main/ic_launcher-playstore.png" alt="Solar Bluetooth Logo">
+</p>
 
 Android app to connect to various bluetooth solar and battery devices. No internet connection or account needed.
 This is originally intended to replace the Renogy DC Home app.
