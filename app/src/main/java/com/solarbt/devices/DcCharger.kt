@@ -1,7 +1,7 @@
-package com.example.solar_bt.devices
+package com.solarbt.devices
 
 import android.util.Log
-import com.example.solar_bt.RegisterInfo
+import com.solarbt.RegisterInfo
 
 object DcCharger : RenogyDevice {
 

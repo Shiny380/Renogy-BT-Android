@@ -1,4 +1,4 @@
-package com.example.solar_bt
+package com.solarbt
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Arrangement
@@ -49,10 +49,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.example.solar_bt.devices.AllowedValuesRule
-import com.example.solar_bt.devices.DeviceConnectionState
-import com.example.solar_bt.devices.MinMaxRule
-import com.example.solar_bt.devices.RenogyData
+import com.solarbt.devices.AllowedValuesRule
+import com.solarbt.devices.DeviceConnectionState
+import com.solarbt.devices.MinMaxRule
+import com.solarbt.devices.RenogyData
 
 @Composable
 fun DataPoint(label: String, data: RenogyData?) {

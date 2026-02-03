@@ -1,6 +1,6 @@
-package com.example.solar_bt.devices
+package com.solarbt.devices
 
-import com.example.solar_bt.RenogyDeviceType
+import com.solarbt.RenogyDeviceType
 
 object RenogyDeviceFactory {
     fun getDevice(deviceType: RenogyDeviceType): RenogyDevice {

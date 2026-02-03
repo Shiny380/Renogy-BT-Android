@@ -1,6 +1,6 @@
-package com.example.solar_bt.devices
+package com.solarbt.devices
 
-import com.example.solar_bt.RegisterInfo
+import com.solarbt.RegisterInfo
 
 sealed class ValidationRule
 data class MinMaxRule(val min: Float, val max: Float) : ValidationRule()

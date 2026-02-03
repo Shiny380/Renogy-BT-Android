@@ -1,4 +1,4 @@
-package com.example.solar_bt.ui.theme
+package com.solarbt.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle

@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "solar-bt"
+rootProject.name = "solarbt"
 include(":app")

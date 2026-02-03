@@ -5,13 +5,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.solar_bt"
+    namespace = "com.solarbt"
     compileSdk {
         version = release(36)
     }
 
     defaultConfig {
-        applicationId = "com.example.solar_bt"
+        applicationId = "com.solarbt"
         minSdk = 33
         targetSdk = 36
         versionCode = 1

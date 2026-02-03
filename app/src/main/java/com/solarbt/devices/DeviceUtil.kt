@@ -1,4 +1,4 @@
-package com.example.solar_bt.devices
+package com.solarbt.devices
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder

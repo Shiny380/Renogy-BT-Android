@@ -1,4 +1,4 @@
-package com.example.solar_bt
+package com.solarbt
 
 fun createModbusCommand(
     isRead: Boolean,           // true = read, false = write

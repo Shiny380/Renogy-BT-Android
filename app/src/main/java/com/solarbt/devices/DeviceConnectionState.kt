@@ -1,10 +1,10 @@
-package com.example.solar_bt.devices
+package com.solarbt.devices
 
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import androidx.compose.runtime.Stable
-import com.example.solar_bt.RegisterInfo
-import com.example.solar_bt.RenogyDeviceType
+import com.solarbt.RegisterInfo
+import com.solarbt.RenogyDeviceType
 import kotlinx.coroutines.Job
 
 enum class ConnectionStatus {

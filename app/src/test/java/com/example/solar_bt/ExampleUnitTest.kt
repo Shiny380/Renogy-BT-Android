@@ -1,4 +1,4 @@
-package com.example.solar_bt
+package com.solarbt
 
 import org.junit.Test
 

@@ -1,4 +1,4 @@
-package com.example.solar_bt
+package com.solarbt
 
 /*                                                                                                                                                                                                                                                                  │
  * This project serves as an open-source replacement for the official Renogy Bluetooth app.                                                                                                                                                                         │
@@ -99,10 +99,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.dialog
 import androidx.navigation.compose.rememberNavController
-import com.example.solar_bt.devices.ConnectionStatus
-import com.example.solar_bt.devices.DeviceConnectionState
-import com.example.solar_bt.devices.RenogyDeviceFactory
-import com.example.solar_bt.ui.theme.SolarbtTheme
+import com.solarbt.devices.ConnectionStatus
+import com.solarbt.devices.DeviceConnectionState
+import com.solarbt.devices.RenogyDeviceFactory
+import com.solarbt.ui.theme.SolarbtTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
